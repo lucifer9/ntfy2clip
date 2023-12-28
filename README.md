@@ -10,6 +10,7 @@ Configuration is managed through Environment Variables:
 - `TOPIC`: to which you subscribe, multiple topics are **NOT** supported for now
 - `TOKEN`: your access token, if needed
 
-To maintain the WebSocket connection, a Ping frame is sent every 60 seconds.  
-If there's no activity for over 120 seconds, the app attempts to reconnect.  
-These intervals are adjustable via the `HEARTBEAT` and `TIMEOUT` environment variables.
+The ntfy server will send Ping frames, so we only need to return a Pong normally,  
+there is no need to actively send Pings to maintain the connection. And of course  
+if there's no activity for over 120 seconds, we will try a reconnect.
+This interval is adjustable via the `TIMEOUT` environment variable.
