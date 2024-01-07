@@ -20,7 +20,7 @@ struct WSMessage {
 
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
-    let mut child = Command::new("/mnt/c/Windows/system32/clip.exe")
+    let mut child = Command::new("/usr/bin/wl-copy")
         .stdin(Stdio::piped())
         .spawn()?;
     let child_stdin = child.stdin.as_mut().unwrap();
