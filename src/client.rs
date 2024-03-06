@@ -20,20 +20,31 @@ struct WSMessage {
 
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
-    let copy_command;
-    if env::var("WSL_DISTRO_NAME").is_ok() {
-        copy_command = "/mnt/c/Windows/System32/clip.exe";
-        info!("running under WSL, using copy command {}", copy_command);
-    } else if env::var("WAYLAND_DISPLAY").is_ok() {
-        copy_command = "/usr/bin/wl-copy";
-        info!("running under Wayland, using copy command {}", copy_command)
-    } else if env::var("DISPLAY").is_ok() {
-        copy_command = "/usr/bin/xclip -sel clip -r -in";
-        info!("running under Xorg, using copy command {}", copy_command);
-    } else {
-        error!("Unknown Environment, cannot determine copy command");
-        return Err(anyhow!("Unknown Environment"));
+    let mut copy_command = "unknown";
+    let mut cur_env = "unknown";
+    if cfg!(unix) {
+        if env::var("WSL_DISTRO_NAME").is_ok() {
+            copy_command = "/mnt/c/Windows/System32/clip.exe";
+            cur_env = "WSL";
+        } else if env::var("WAYLAND_DISPLAY").is_ok() {
+            copy_command = "/usr/bin/wl-copy";
+            cur_env = "Wayland";
+        } else if env::var("DISPLAY").is_ok() {
+            copy_command = "/usr/bin/xclip -sel clip -r -in";
+            cur_env = "Xorg";
+        } else if cfg!(macos) {
+            copy_command = "/usr/bin/pbcopy";
+            cur_env = "macOS";
+        }
     }
+    if copy_command == "unknown" {
+        error!("Cannot determine copy command");
+        return Err(anyhow!("Unknown cmd"));
+    }
+    info!(
+        "running under {}, using copy command {}",
+        cur_env, copy_command
+    );
     let mut child = Command::new(copy_command).stdin(Stdio::piped()).spawn()?;
     let child_stdin = child.stdin.as_mut().unwrap();
     let mut cursor = Cursor::new(content.as_bytes());
