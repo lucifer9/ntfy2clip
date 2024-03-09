@@ -20,32 +20,40 @@ struct WSMessage {
 
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
-    let mut copy_command = "unknown";
-    let mut cur_env = "unknown";
+    let mut copy_command: Option<&str> = None;
+    let mut cur_env: Option<&str> = None;
+    let mut cmd: Option<Command> = None;
     if cfg!(unix) {
         if env::var("WSL_DISTRO_NAME").is_ok() {
-            copy_command = "/mnt/c/Windows/System32/clip.exe";
-            cur_env = "WSL";
+            copy_command = Some("/mnt/c/Windows/System32/clip.exe");
+            cur_env = Some("WSL");
+            cmd = Some(Command::new(copy_command.unwrap()));
         } else if env::var("WAYLAND_DISPLAY").is_ok() {
-            copy_command = "/usr/bin/wl-copy";
-            cur_env = "Wayland";
+            copy_command = Some("/usr/bin/wl-copy");
+            cur_env = Some("Wayland");
+            cmd = Some(Command::new(copy_command.unwrap()));
         } else if env::var("DISPLAY").is_ok() {
-            copy_command = "/usr/bin/xclip -sel clip -r -in";
-            cur_env = "Xorg";
+            copy_command = Some("/usr/bin/xclip");
+            cur_env = Some("Xorg");
+            let mut cmd1 = Command::new(copy_command.unwrap());
+            cmd1.arg("-sel").arg("clip").arg("-r").arg("-in");
+            cmd = Some(cmd1);
         } else if cfg!(macos) {
-            copy_command = "/usr/bin/pbcopy";
-            cur_env = "macOS";
+            copy_command = Some("/usr/bin/pbcopy");
+            cur_env = Some("macOS");
+            cmd = Some(Command::new(copy_command.unwrap()));
         }
     }
-    if copy_command == "unknown" {
+    if copy_command.is_none() {
         error!("Cannot determine copy command");
         return Err(anyhow!("Unknown cmd"));
     }
     info!(
         "running under {}, using copy command {}",
-        cur_env, copy_command
+        cur_env.unwrap(),
+        copy_command.unwrap()
     );
-    let mut child = Command::new(copy_command).stdin(Stdio::piped()).spawn()?;
+    let mut child = cmd.unwrap().stdin(Stdio::piped()).spawn()?;
     let child_stdin = child.stdin.as_mut().unwrap();
     let mut cursor = Cursor::new(content.as_bytes());
     io::copy(&mut cursor, child_stdin)?;
