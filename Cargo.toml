@@ -1,6 +1,6 @@
 [package]
 name = "ntfy2clip"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 
 [[bin]]
@@ -18,8 +18,13 @@ tokio = { version = "1", features = [
 log = "0.4"
 pretty_env_logger = "0.5"
 anyhow = "1"
-tokio-tungstenite = { version = "*", features = ["native-tls"] }
 url = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures-util = "0.3"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tokio-tungstenite = { version = "*", features = ["native-tls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tokio-tungstenite = { version = "*", features = ["rustls-tls-native-roots"] }

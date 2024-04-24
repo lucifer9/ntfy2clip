@@ -23,7 +23,7 @@ async fn set_clip(content: String) -> Result<()> {
     let mut copy_command: Option<&str> = None;
     let mut cur_env: Option<&str> = None;
     let mut cmd: Option<Command> = None;
-    if cfg!(unix) {
+    if cfg!(target_family = "unix") {
         if env::var("WSL_DISTRO_NAME").is_ok() {
             copy_command = Some("/mnt/c/Windows/System32/clip.exe");
             cur_env = Some("WSL");
@@ -38,7 +38,7 @@ async fn set_clip(content: String) -> Result<()> {
             let mut cmd1 = Command::new(copy_command.unwrap());
             cmd1.arg("-sel").arg("clip").arg("-r").arg("-in");
             cmd = Some(cmd1);
-        } else if cfg!(macos) {
+        } else if cfg!(target_os = "macos") {
             copy_command = Some("/usr/bin/pbcopy");
             cur_env = Some("macOS");
             cmd = Some(Command::new(copy_command.unwrap()));
