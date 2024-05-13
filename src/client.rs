@@ -89,7 +89,7 @@ async fn connect_and_run() -> Result<()> {
         .parse::<u64>()
         .unwrap();
     let server = env::var("SERVER").unwrap_or("ntfy.sh".to_string());
-    let scheme = env::var("SHEME").unwrap_or("wss".to_string());
+    let scheme = env::var("SCHEME").unwrap_or("wss".to_string());
     let topic = env::var("TOPIC").expect("You must subscribe to a topic.");
     let url =
         Url::parse(format!("{}://{}/{}/ws", scheme, server, topic).as_str()).expect("Invalid URL");
