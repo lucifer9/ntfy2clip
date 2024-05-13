@@ -2,9 +2,12 @@ use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info};
 use serde::Deserialize;
-use std::io::Cursor;
-use std::process::{Command, Stdio};
-use std::{env, io};
+#[cfg(target_os = "windows")]
+use std::{ffi::{c_uint, c_void, OsStr}, os::windows::ffi::OsStrExt, ptr, io::Error};
+use std::env;
+#[cfg(target_family = "unix")]
+use std::{io::Cursor, process::{Command, Stdio}};
+#[cfg(target_family = "unix")]
 use tokio::spawn;
 use tokio::time::{self, Duration, Instant};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -18,69 +21,86 @@ struct WSMessage {
     message: Option<String>,
 }
 
+#[cfg(target_os = "windows")]
+#[link(name = "user32", kind = "dylib")]
+extern "system" {
+    fn OpenClipboard(hWndNewOwner: *mut c_void) -> bool;
+    fn SetClipboardData(uformat: c_uint, data: *mut c_void) -> *mut c_void;
+    fn CloseClipboard() -> bool;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32", kind = "dylib")]
+extern "system" {
+    fn GlobalAlloc(uFlags: c_uint, dwBytes: usize) -> *mut c_void;
+    fn GlobalLock(hMem: *mut c_void) -> *mut c_void;
+    fn GlobalUnlock(hMem: *mut c_void) -> bool;
+}
+
+#[cfg(target_family = "unix")]
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
-    let mut copy_command: Option<&str> = None;
-    let mut cur_env: Option<&str> = None;
-    let mut cmd: Option<Command> = None;
-    if cfg!(target_family = "unix") {
-        if env::var("WSL_DISTRO_NAME").is_ok() {
-            copy_command = Some("/mnt/c/Windows/System32/clip.exe");
-            cur_env = Some("WSL");
-            cmd = Some(Command::new(copy_command.unwrap()));
-        } else if env::var("WAYLAND_DISPLAY").is_ok() {
-            copy_command = Some("/usr/bin/wl-copy");
-            cur_env = Some("Wayland");
-            cmd = Some(Command::new(copy_command.unwrap()));
-        } else if env::var("DISPLAY").is_ok() {
-            copy_command = Some("/usr/bin/xclip");
-            cur_env = Some("Xorg");
-            let mut cmd1 = Command::new(copy_command.unwrap());
-            cmd1.arg("-sel").arg("clip").arg("-r").arg("-in");
-            cmd = Some(cmd1);
-        } else if cfg!(target_os = "macos") {
-            copy_command = Some("/usr/bin/pbcopy");
-            cur_env = Some("macOS");
-            cmd = Some(Command::new(copy_command.unwrap()));
-        }
-    }
-    if copy_command.is_none() {
-        error!("Cannot determine copy command");
-        return Err(anyhow!("Unknown cmd"));
-    }
-    info!(
-        "running under {}, using copy command {}",
-        cur_env.unwrap(),
-        copy_command.unwrap()
-    );
+
+    #[cfg(target_os = "linux")]
+    let cmd: Option<Command> = Some(if env::var("WSL_DISTRO_NAME").is_ok() {
+        Command::new(Some("/mnt/c/Windows/System32/clip.exe").unwrap());
+    } else if env::var("WAYLAND_DISPLAY").is_ok() {
+        Command::new(Some("/usr/bin/wl-copy").unwrap())
+    } else if env::var("DISPLAY").is_ok() {
+        Command::new(Some("/usr/bin/xclip").unwrap())
+            .arg("-sel")
+            .arg("clip")
+            .arg("-r")
+            .arg("-in")
+    });
+
+    #[cfg(target_os = "macos")]
+    let cmd: Option<Command> = Some(Command::new(Some("/usr/bin/pbcopy").unwrap()));
+
     let mut child = cmd.unwrap().stdin(Stdio::piped()).spawn()?;
     let child_stdin = child.stdin.as_mut().unwrap();
     let mut cursor = Cursor::new(content.as_bytes());
     io::copy(&mut cursor, child_stdin)?;
     child.wait()?;
+
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
-    let dev = env::var("DEV").is_ok();
-    if dev {
-        env::set_var("RUST_LOG", "debug");
+#[cfg(target_os = "windows")]
+unsafe fn set_clip(content: String) -> Result<(), Error> {
+    let text: Vec<u16> = OsStr::new(&content)
+        .encode_wide()
+        .chain(Some(0).into_iter())
+        .collect();
+
+    let hglob = GlobalAlloc(2 /* GMEM_MOVEABLE */, text.len() * std::mem::size_of::<u16>());
+
+    if hglob == ptr::null_mut() {
+        return Err(Error::last_os_error());
     }
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "info");
+
+    let dst = GlobalLock(hglob);
+
+    if dst == ptr::null_mut() {
+        return Err(Error::last_os_error());
     }
-    pretty_env_logger::init();
-    loop {
-        match connect_and_run().await {
-            Ok(()) => println!("Connection closed cleanly"),
-            Err(e) => {
-                error!("Connection error: {:?}. Reconnecting...", e);
-                // Optionally add a delay before reconnecting
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
+
+    ptr::copy_nonoverlapping(text.as_ptr(), dst as _, text.len());
+
+    GlobalUnlock(hglob);
+
+    if !OpenClipboard(ptr::null_mut()) {
+        return Err(Error::last_os_error());
     }
+
+    if SetClipboardData(13 /* CF_UNICODETEXT */ , hglob) == ptr::null_mut() {
+        CloseClipboard();
+        return Err(Error::last_os_error());
+    }
+
+    CloseClipboard();
+
+    Ok(())
 }
 
 async fn connect_and_run() -> Result<()> {
@@ -98,7 +118,7 @@ async fn connect_and_run() -> Result<()> {
     if !token.is_empty() {
         request
             .headers_mut()
-            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
     }
 
     debug!("request: {:?}", &request);
@@ -119,6 +139,9 @@ async fn connect_and_run() -> Result<()> {
                                 if (msg.topic == topic) && (msg.event == "message") {
                                     debug!("WS received message: {:?}", &msg);
                                     if let Some(message) = msg.message {
+                                        #[cfg(target_os = "windows")]
+                                        unsafe { set_clip(message).unwrap() };
+                                        #[cfg(target_family = "unix")]
                                         spawn(set_clip(message));
                                     }
                                 }
@@ -149,6 +172,28 @@ async fn connect_and_run() -> Result<()> {
                 if last_traffic.elapsed() > Duration::from_secs(timeout) {
                     return Err(anyhow!("No traffic in the last 120 seconds".to_string()));
                 }
+            }
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let dev = env::var("DEV").is_ok();
+    if dev {
+        env::set_var("RUST_LOG", "debug");
+    }
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", "info");
+    }
+    pretty_env_logger::init();
+    loop {
+        match connect_and_run().await {
+            Ok(()) => println!("Connection closed cleanly"),
+            Err(e) => {
+                error!("Connection error: {:?}. Reconnecting...", e);
+                // Optionally add a delay before reconnecting
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
     }
