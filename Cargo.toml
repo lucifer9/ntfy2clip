@@ -24,7 +24,7 @@ serde_json = "1.0"
 futures-util = "0.3"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-tokio-tungstenite = { version = "*", features = ["native-tls"] }
+tokio-tungstenite = { git = "https://github.com/snapview/tokio-tungstenite", rev = "db9ae7eb715e2b4a89deed4bc25d83e1d513d01f", features = ["native-tls", "url"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tokio-tungstenite = { version = "*", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { git = "https://github.com/snapview/tokio-tungstenite", rev = "db9ae7eb715e2b4a89deed4bc25d83e1d513d01f", features = ["rustls-tls-native-roots", "url"] }
