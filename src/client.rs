@@ -71,6 +71,9 @@ async fn main() {
         env::set_var("RUST_LOG", "info");
     }
     pretty_env_logger::init();
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
     loop {
         match connect_and_run().await {
             Ok(()) => println!("Connection closed cleanly"),
