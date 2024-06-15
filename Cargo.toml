@@ -1,6 +1,6 @@
 [package]
 name = "ntfy2clip"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 
 [[bin]]
@@ -30,6 +30,7 @@ tokio-tungstenite = { git = "https://github.com/snapview/tokio-tungstenite", rev
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+oslog = "0.2.0"
 rustls = { version = "0.23" }
 tokio-tungstenite = { git = "https://github.com/snapview/tokio-tungstenite", rev = "db9ae7eb715e2b4a89deed4bc25d83e1d513d01f", features = [
     "rustls-tls-native-roots",

@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info};
+#[cfg(target_os = "macos")]
+use oslog::OsLogger;
 use serde::Deserialize;
 use std::io::Cursor;
 use std::process::{Command, Stdio};
@@ -70,9 +72,15 @@ async fn main() {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "info");
     }
+    #[cfg(not(target_os = "macos"))]
     pretty_env_logger::init();
 
     #[cfg(target_os = "macos")]
+    OsLogger::new("ntfyclip")
+        .level_filter(log::LevelFilter::Debug)
+        .category_level_filter("Settings", log::LevelFilter::Trace)
+        .init()
+        .unwrap();
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .unwrap();
