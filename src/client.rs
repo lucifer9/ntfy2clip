@@ -81,6 +81,7 @@ async fn main() {
         .category_level_filter("Settings", log::LevelFilter::Trace)
         .init()
         .unwrap();
+    #[cfg(target_os = "macos")]
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .unwrap();
