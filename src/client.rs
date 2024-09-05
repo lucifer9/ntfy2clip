@@ -19,47 +19,47 @@ struct WSMessage {
     topic: String,
     message: Option<String>,
 }
-
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
-    let mut copy_command: Option<&str> = None;
-    let mut cur_env: Option<&str> = None;
-    let mut cmd: Option<Command> = None;
-    if cfg!(target_family = "unix") {
-        if env::var("WSL_DISTRO_NAME").is_ok() {
-            copy_command = Some("/mnt/c/Windows/System32/clip.exe");
-            cur_env = Some("WSL");
-            cmd = Some(Command::new(copy_command.unwrap()));
-        } else if env::var("WAYLAND_DISPLAY").is_ok() {
-            copy_command = Some("/usr/bin/wl-copy");
-            cur_env = Some("Wayland");
-            cmd = Some(Command::new(copy_command.unwrap()));
-        } else if env::var("DISPLAY").is_ok() {
-            copy_command = Some("/usr/bin/xclip");
-            cur_env = Some("Xorg");
-            let mut cmd1 = Command::new(copy_command.unwrap());
-            cmd1.arg("-sel").arg("clip").arg("-r").arg("-in");
-            cmd = Some(cmd1);
-        } else if cfg!(target_os = "macos") {
-            copy_command = Some("/usr/bin/pbcopy");
-            cur_env = Some("macOS");
-            cmd = Some(Command::new(copy_command.unwrap()));
+
+    let (copy_command, cur_env, mut cmd) = match env::consts::FAMILY {
+        "unix" => {
+            if env::var("WSL_DISTRO_NAME").is_ok() {
+                (
+                    "clip.exe",
+                    "WSL",
+                    Command::new("/mnt/c/Windows/System32/clip.exe"),
+                )
+            } else if env::var("WAYLAND_DISPLAY").is_ok() {
+                ("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy"))
+            } else if env::var("DISPLAY").is_ok() {
+                ("xclip", "Xorg", {
+                    let mut cmd = Command::new("/usr/bin/xclip");
+                    cmd.args(["-sel", "clip", "-r", "-in"]);
+                    cmd
+                })
+            } else if cfg!(target_os = "macos") {
+                ("pbcopy", "macOS", Command::new("/usr/bin/pbcopy"))
+            } else {
+                return Err(anyhow!("Unsupported Unix environment"));
+            }
         }
-    }
-    if copy_command.is_none() {
-        error!("Cannot determine copy command");
-        return Err(anyhow!("Unknown cmd"));
-    }
+        _ => return Err(anyhow!("Unsupported operating system")),
+    };
+
     info!(
-        "running under {}, using copy command {}",
-        cur_env.unwrap(),
-        copy_command.unwrap()
+        "Running under {}, using copy command {}",
+        cur_env, copy_command
     );
-    let mut child = cmd.unwrap().stdin(Stdio::piped()).spawn()?;
-    let child_stdin = child.stdin.as_mut().unwrap();
-    let mut cursor = Cursor::new(content.as_bytes());
-    io::copy(&mut cursor, child_stdin)?;
+
+    let mut child = cmd.stdin(Stdio::piped()).spawn()?;
+    let child_stdin = child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| anyhow!("Failed to open stdin"))?;
+    io::copy(&mut Cursor::new(content.as_bytes()), child_stdin)?;
     child.wait()?;
+
     Ok(())
 }
 
