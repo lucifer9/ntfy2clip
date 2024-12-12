@@ -4,9 +4,9 @@ use log::{debug, error, info};
 #[cfg(target_os = "macos")]
 use oslog::OsLogger;
 use serde::Deserialize;
-use std::io::Cursor;
+use std::env;
+use std::io::Write;
 use std::process::{Command, Stdio};
-use std::{env, io};
 use tokio::spawn;
 use tokio::time::{self, Duration, Instant};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -53,11 +53,14 @@ async fn set_clip(content: String) -> Result<()> {
     );
 
     let mut child = cmd.stdin(Stdio::piped()).spawn()?;
-    let child_stdin = child
+    let mut child_stdin = child
         .stdin
-        .as_mut()
+        .take()
         .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-    io::copy(&mut Cursor::new(content.as_bytes()), child_stdin)?;
+    // io::copy(&mut Cursor::new(content.as_bytes()), child_stdin)?;
+    child_stdin.write_all(content.as_bytes())?;
+    child_stdin.flush()?;
+    drop(child_stdin);
     child.wait()?;
 
     Ok(())
