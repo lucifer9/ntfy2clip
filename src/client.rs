@@ -22,29 +22,32 @@ struct WSMessage {
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
 
-    let (copy_command, cur_env, mut cmd) = match env::consts::FAMILY {
-        "unix" => {
-            if env::var("WSL_DISTRO_NAME").is_ok() {
-                (
-                    "clip.exe",
-                    "WSL",
-                    Command::new("/mnt/c/Windows/System32/clip.exe"),
-                )
-            } else if env::var("WAYLAND_DISPLAY").is_ok() {
-                ("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy"))
-            } else if env::var("DISPLAY").is_ok() {
-                ("xclip", "Xorg", {
-                    let mut cmd = Command::new("/usr/bin/xclip");
-                    cmd.args(["-sel", "clip", "-r", "-in"]);
-                    cmd
-                })
-            } else if cfg!(target_os = "macos") {
-                ("pbcopy", "macOS", Command::new("/usr/bin/pbcopy"))
-            } else {
-                return Err(anyhow!("Unsupported Unix environment"));
+    let (copy_command, cur_env, mut cmd) = if cfg!(target_os = "macos") {
+        ("pbcopy", "macOS", Command::new("/usr/bin/pbcopy"))
+    } else {
+        match env::consts::FAMILY {
+            "unix" => {
+                if env::var("WSL_DISTRO_NAME").is_ok() {
+                    (
+                        "clip.exe",
+                        "WSL",
+                        Command::new("/mnt/c/Windows/System32/clip.exe"),
+                    )
+                } else if env::var("WAYLAND_DISPLAY").is_ok() {
+                    ("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy"))
+                } else if env::var("DISPLAY").is_ok() {
+                    ("xclip", "Xorg", {
+                        let mut cmd = Command::new("/usr/bin/xclip");
+                        cmd.args(["-sel", "clip", "-r", "-in"]);
+                        cmd
+                    })
+                } else {
+                    return Err(anyhow!("Unsupported Unix environment"));
+                }
             }
+            "windows" => ("clip.exe", "Windows", Command::new("clip.exe")),
+            _ => return Err(anyhow!("Unsupported operating system")),
         }
-        _ => return Err(anyhow!("Unsupported operating system")),
     };
 
     info!(
