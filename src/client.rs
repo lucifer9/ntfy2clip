@@ -72,12 +72,13 @@ async fn set_clip(content: String) -> Result<()> {
 #[tokio::main]
 async fn main() {
     let dev = env::var("DEV").is_ok();
+    unsafe {
     if dev {
         env::set_var("RUST_LOG", "debug");
     }
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "info");
-    }
+    }}
     #[cfg(not(target_os = "macos"))]
     pretty_env_logger::init();
 
