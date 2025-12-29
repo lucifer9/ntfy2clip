@@ -5,8 +5,8 @@ use log::{debug, error, info};
 use oslog::OsLogger;
 use serde::Deserialize;
 use std::env;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use tokio::io::AsyncWriteExt;
+use tokio::process::{Child, Command};
 use tokio::spawn;
 use tokio::time::{self, Duration, Instant};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -19,52 +19,62 @@ struct WSMessage {
     topic: String,
     message: Option<String>,
 }
+#[cfg(target_os = "macos")]
+fn create_clip_command() -> Result<(&'static str, &'static str, Command)> {
+    Ok(("pbcopy", "macOS", Command::new("/usr/bin/pbcopy")))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn create_clip_command() -> Result<(&'static str, &'static str, Command)> {
+    match env::consts::FAMILY {
+        "unix" => {
+            if env::var("WSL_DISTRO_NAME").is_ok() {
+                Ok((
+                    "clip.exe",
+                    "WSL",
+                    Command::new("/mnt/c/Windows/System32/clip.exe"),
+                ))
+            } else if env::var("WAYLAND_DISPLAY").is_ok() {
+                Ok(("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy")))
+            } else if env::var("DISPLAY").is_ok() {
+                let mut cmd = Command::new("/usr/bin/xclip");
+                cmd.args(["-sel", "clip", "-r", "-in"]);
+                Ok(("xclip", "Xorg", cmd))
+            } else {
+                Err(anyhow!("Unsupported Unix environment"))
+            }
+        }
+        "windows" => Ok(("clip.exe", "Windows", Command::new("clip.exe"))),
+        _ => Err(anyhow!("Unsupported operating system")),
+    }
+}
+
+async fn spawn_clip_process(mut cmd: Command) -> Result<Child> {
+    use std::process::Stdio;
+    cmd.stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("Failed to spawn clipboard process: {}", e))
+}
+
 async fn set_clip(content: String) -> Result<()> {
     info!("Setting clipboard to: {}", &content);
 
-    let (copy_command, cur_env, mut cmd) = if cfg!(target_os = "macos") {
-        ("pbcopy", "macOS", Command::new("/usr/bin/pbcopy"))
-    } else {
-        match env::consts::FAMILY {
-            "unix" => {
-                if env::var("WSL_DISTRO_NAME").is_ok() {
-                    (
-                        "clip.exe",
-                        "WSL",
-                        Command::new("/mnt/c/Windows/System32/clip.exe"),
-                    )
-                } else if env::var("WAYLAND_DISPLAY").is_ok() {
-                    ("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy"))
-                } else if env::var("DISPLAY").is_ok() {
-                    ("xclip", "Xorg", {
-                        let mut cmd = Command::new("/usr/bin/xclip");
-                        cmd.args(["-sel", "clip", "-r", "-in"]);
-                        cmd
-                    })
-                } else {
-                    return Err(anyhow!("Unsupported Unix environment"));
-                }
-            }
-            "windows" => ("clip.exe", "Windows", Command::new("clip.exe")),
-            _ => return Err(anyhow!("Unsupported operating system")),
-        }
-    };
-
-    info!(
+    let (copy_command, cur_env, cmd) = create_clip_command()?;
+    debug!(
         "Running under {}, using copy command {}",
         cur_env, copy_command
     );
 
-    let mut child = cmd.stdin(Stdio::piped()).spawn()?;
+    let mut child = spawn_clip_process(cmd).await?;
     let mut child_stdin = child
         .stdin
         .take()
         .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-    // io::copy(&mut Cursor::new(content.as_bytes()), child_stdin)?;
-    child_stdin.write_all(content.as_bytes())?;
-    child_stdin.flush()?;
+
+    child_stdin.write_all(content.as_bytes()).await?;
+    child_stdin.flush().await?;
     drop(child_stdin);
-    child.wait()?;
+    child.wait().await?;
 
     Ok(())
 }
@@ -72,22 +82,26 @@ async fn set_clip(content: String) -> Result<()> {
 #[tokio::main]
 async fn main() {
     let dev = env::var("DEV").is_ok();
-    unsafe {
-    if dev {
-        env::set_var("RUST_LOG", "debug");
-    }
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "info");
-    }}
+    let log_level = if dev {
+        log::LevelFilter::Debug
+    } else {
+        env::var("RUST_LOG")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(log::LevelFilter::Info)
+    };
+
     #[cfg(not(target_os = "macos"))]
-    pretty_env_logger::init();
+    pretty_env_logger::formatted_builder()
+        .filter_level(log_level)
+        .init();
 
     #[cfg(target_os = "macos")]
     OsLogger::new("ntfyclip")
-        .level_filter(log::LevelFilter::Debug)
+        .level_filter(log_level)
         .category_level_filter("Settings", log::LevelFilter::Trace)
         .init()
-        .unwrap();
+        .expect("Failed to initialize logger");
     #[cfg(target_os = "macos")]
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -105,22 +119,28 @@ async fn main() {
     }
 }
 
+const DEFAULT_TIMEOUT: u64 = 120;
+
 async fn connect_and_run() -> Result<()> {
     let timeout = env::var("TIMEOUT")
-        .unwrap_or("120".to_string())
-        .parse::<u64>()
-        .unwrap();
-    let server = env::var("SERVER").unwrap_or("ntfy.sh".to_string());
-    let scheme = env::var("SCHEME").unwrap_or("wss".to_string());
-    let topic = env::var("TOPIC").expect("You must subscribe to a topic.");
-    let url =
-        Url::parse(format!("{}://{}/{}/ws", scheme, server, topic).as_str()).expect("Invalid URL");
-    let token = env::var("TOKEN").unwrap_or("".to_string());
-    let mut request = url.into_client_request().unwrap();
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&t| t > 0)
+        .unwrap_or(DEFAULT_TIMEOUT);
+    let server = env::var("SERVER").unwrap_or_else(|_| "ntfy.sh".to_string());
+    let scheme = env::var("SCHEME").unwrap_or_else(|_| "wss".to_string());
+    let topic = env::var("TOPIC").map_err(|_| anyhow!("TOPIC environment variable is required"))?;
+    let url = Url::parse(&format!("{}://{}/{}/ws", scheme, server, topic))
+        .map_err(|e| anyhow!("Invalid URL: {}", e))?;
+    let token = env::var("TOKEN").unwrap_or_default();
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| anyhow!("Failed to create request: {}", e))?;
     if !token.is_empty() {
-        request
-            .headers_mut()
-            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+        let auth_value = format!("Bearer {token}")
+            .parse()
+            .map_err(|_| anyhow!("Invalid token format"))?;
+        request.headers_mut().insert("Authorization", auth_value);
     }
 
     debug!("request: {:?}", &request);
@@ -141,7 +161,11 @@ async fn connect_and_run() -> Result<()> {
                                 if (msg.topic == topic) && (msg.event == "message") {
                                     debug!("WS received message: {:?}", &msg);
                                     if let Some(message) = msg.message {
-                                        spawn(set_clip(message));
+                                        spawn(async move {
+                                            if let Err(e) = set_clip(message).await {
+                                                error!("Failed to set clipboard: {}", e);
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -169,7 +193,7 @@ async fn connect_and_run() -> Result<()> {
             },
             _ = ping_interval.tick() => {
                 if last_traffic.elapsed() > Duration::from_secs(timeout) {
-                    return Err(anyhow!("No traffic in the last 120 seconds".to_string()));
+                    return Err(anyhow!("No traffic in the last {} seconds", timeout));
                 }
             }
         }
