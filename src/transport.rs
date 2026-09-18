@@ -42,6 +42,7 @@ impl Publisher {
         match request.send().await {
             Ok(response) if response.status().is_success() => PublishResult::Accepted,
             Ok(response) if response.status() == StatusCode::TOO_MANY_REQUESTS => {
+                log::warn!("HTTP publish rate limited status=429");
                 let after = response
                     .headers()
                     .get(header::RETRY_AFTER)
@@ -55,6 +56,10 @@ impl Publisher {
                     && response.status() != StatusCode::NOT_IMPLEMENTED
                     && response.status() != StatusCode::HTTP_VERSION_NOT_SUPPORTED =>
             {
+                log::warn!(
+                    "HTTP publish retryable status={}",
+                    response.status().as_u16()
+                );
                 PublishResult::Retry { after: None }
             }
             Ok(response) => {
@@ -64,8 +69,23 @@ impl Publisher {
                 );
                 PublishResult::Rejected
             }
-            Err(error) if error.is_builder() => PublishResult::Rejected,
-            Err(_) => PublishResult::Retry { after: None },
+            Err(error) => {
+                // Error sources can contain URLs or credentials; log only classifications.
+                log::warn!(
+                    "HTTP publish transport failed builder={} timeout={} connect={} request={} body={} decode={}",
+                    error.is_builder(),
+                    error.is_timeout(),
+                    error.is_connect(),
+                    error.is_request(),
+                    error.is_body(),
+                    error.is_decode()
+                );
+                if error.is_builder() {
+                    PublishResult::Rejected
+                } else {
+                    PublishResult::Retry { after: None }
+                }
+            }
         }
     }
 }
