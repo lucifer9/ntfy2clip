@@ -1,6 +1,6 @@
 [package]
 name = "ntfy2clip"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2024"
 
 [[bin]]
@@ -8,7 +8,16 @@ name = "n2c"
 path = "src/client.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "process", "time", "sync", "io-util", "signal"] }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "net",
+  "macros",
+  "process",
+  "time",
+  "sync",
+  "io-util",
+  "signal",
+] }
 log = "0.4"
 pretty_env_logger = "0.5"
 anyhow = "1"
@@ -17,8 +26,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures-util = "0.3"
 uuid = { version = "1.26.1", features = ["v4", "serde"] }
-sha2 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+sha2 = "0.11"
+reqwest = { version = "0.13", default-features = false, features = [
+  "native-tls",
+] }
 httpdate = "1.0.3"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
@@ -26,18 +37,23 @@ tokio-tungstenite = { version = "0.30", features = ["native-tls", "url"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSArray"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "NSPasteboard",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "NSString",
+  "NSArray",
+] }
 oslog = "0.2.0"
 rustls = { version = "0.23" }
 tokio-tungstenite = { version = "0.30", features = [
-    "rustls-tls-native-roots",
-    "url",
+  "rustls-tls-native-roots",
+  "url",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-clipboard-rs = "0.9.3"
-x11rb = { version = "0.13", features = ["xfixes"] }
+x11rb = { version = "0.14", features = ["xfixes"] }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
