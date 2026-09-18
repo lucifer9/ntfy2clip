@@ -1,88 +1,41 @@
-use anyhow::{anyhow, Result};
-use futures_util::{SinkExt, StreamExt};
-use log::{debug, error, info};
-#[cfg(target_os = "macos")]
-use oslog::OsLogger;
-use serde::Deserialize;
-use std::env;
-use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, Command};
-use tokio::spawn;
-use tokio::time::{self, Duration, Instant};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use url::Url;
+use anyhow::Result;
+use ntfy2clip::{
+    clipboard::Clipboard,
+    config::{Config, Mode},
+    platform::{self, Backend},
+    sync::Coordinator,
+    transport::{self, Publisher},
+};
+use std::{env, time::Duration};
+use tokio::{task::JoinSet, time};
 
-#[derive(Deserialize, Debug)]
-struct WSMessage {
-    event: String,
-    topic: String,
-    message: Option<String>,
-}
 #[cfg(target_os = "macos")]
-fn create_clip_command() -> Result<(&'static str, &'static str, Command)> {
-    Ok(("pbcopy", "macOS", Command::new("/usr/bin/pbcopy")))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn create_clip_command() -> Result<(&'static str, &'static str, Command)> {
-    match env::consts::FAMILY {
-        "unix" => {
-            if env::var("WSL_DISTRO_NAME").is_ok() {
-                Ok((
-                    "clip.exe",
-                    "WSL",
-                    Command::new("/mnt/c/Windows/System32/clip.exe"),
-                ))
-            } else if env::var("WAYLAND_DISPLAY").is_ok() {
-                Ok(("wl-copy", "Wayland", Command::new("/usr/bin/wl-copy")))
-            } else if env::var("DISPLAY").is_ok() {
-                let mut cmd = Command::new("/usr/bin/xclip");
-                cmd.args(["-sel", "clip", "-r", "-in"]);
-                Ok(("xclip", "Xorg", cmd))
-            } else {
-                Err(anyhow!("Unsupported Unix environment"))
-            }
+struct ProjectOsLogger(oslog::OsLogger);
+#[cfg(target_os = "macos")]
+impl log::Log for ProjectOsLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        (metadata.target() == "n2c" || metadata.target().starts_with("ntfy2clip"))
+            && self.0.enabled(metadata)
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            self.0.log(record);
         }
-        "windows" => Ok(("clip.exe", "Windows", Command::new("clip.exe"))),
-        _ => Err(anyhow!("Unsupported operating system")),
+    }
+    fn flush(&self) {
+        self.0.flush();
     }
 }
 
-async fn spawn_clip_process(mut cmd: Command) -> Result<Child> {
-    use std::process::Stdio;
-    cmd.stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| anyhow!("Failed to spawn clipboard process: {}", e))
-}
-
-async fn set_clip(content: String) -> Result<()> {
-    info!("Setting clipboard to: {}", &content);
-
-    let (copy_command, cur_env, cmd) = create_clip_command()?;
-    debug!(
-        "Running under {}, using copy command {}",
-        cur_env, copy_command
-    );
-
-    let mut child = spawn_clip_process(cmd).await?;
-    let mut child_stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-
-    child_stdin.write_all(content.as_bytes()).await?;
-    child_stdin.flush().await?;
-    drop(child_stdin);
-    child.wait().await?;
-
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() {
-    let dev = env::var("DEV").is_ok();
-    let log_level = if dev {
+fn main() {
+    if env::args().nth(1).as_deref() == Some("--clipboard-helper") {
+        if platform::helper_main().is_err() {
+            eprintln!("clipboard helper failed");
+            std::process::exit(1);
+        }
+        return;
+    }
+    let log_level = if env::var_os("DEV").is_some() {
         log::LevelFilter::Debug
     } else {
         env::var("RUST_LOG")
@@ -90,112 +43,77 @@ async fn main() {
             .and_then(|s| s.parse().ok())
             .unwrap_or(log::LevelFilter::Info)
     };
-
-    #[cfg(not(target_os = "macos"))]
-    pretty_env_logger::formatted_builder()
-        .filter_level(log_level)
-        .init();
-
+    // Dependency debug logs may contain WebSocket bodies or HTTP credentials.
+    // Only project targets are allowed, including when DEV enables debug.
     #[cfg(target_os = "macos")]
-    OsLogger::new("ntfyclip")
-        .level_filter(log_level)
-        .category_level_filter("Settings", log::LevelFilter::Trace)
-        .init()
-        .expect("Failed to initialize logger");
+    if env::var_os("DEV").is_none() {
+        log::set_boxed_logger(Box::new(ProjectOsLogger(
+            oslog::OsLogger::new("ntfyclip").level_filter(log_level),
+        )))
+        .expect("logger initialization");
+    }
+    if !cfg!(target_os = "macos") || env::var_os("DEV").is_some() {
+        pretty_env_logger::formatted_builder()
+            .filter_level(log::LevelFilter::Off)
+            .filter_module("n2c", log_level)
+            .filter_module("ntfy2clip", log_level)
+            .init();
+    }
     #[cfg(target_os = "macos")]
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
-        .unwrap();
-
-    loop {
-        match connect_and_run().await {
-            Ok(()) => println!("Connection closed cleanly"),
-            Err(e) => {
-                error!("Connection error: {:?}. Reconnecting...", e);
-                // Optionally add a delay before reconnecting
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
+        .expect("TLS provider initialization");
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime initialization")
+        .block_on(run());
+    if let Err(error) = result {
+        log::error!("n2c stopped: {error}");
+        std::process::exit(1);
     }
 }
-
-const DEFAULT_TIMEOUT: u64 = 120;
-
-async fn connect_and_run() -> Result<()> {
-    let timeout = env::var("TIMEOUT")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .filter(|&t| t > 0)
-        .unwrap_or(DEFAULT_TIMEOUT);
-    let server = env::var("SERVER").unwrap_or_else(|_| "ntfy.sh".to_string());
-    let scheme = env::var("SCHEME").unwrap_or_else(|_| "wss".to_string());
-    let topic = env::var("TOPIC").map_err(|_| anyhow!("TOPIC environment variable is required"))?;
-    let url = Url::parse(&format!("{}://{}/{}/ws", scheme, server, topic))
-        .map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    let token = env::var("TOKEN").unwrap_or_default();
-    let mut request = url
-        .into_client_request()
-        .map_err(|e| anyhow!("Failed to create request: {}", e))?;
-    if !token.is_empty() {
-        let auth_value = format!("Bearer {token}")
-            .parse()
-            .map_err(|_| anyhow!("Invalid token format"))?;
-        request.headers_mut().insert("Authorization", auth_value);
+async fn run() -> Result<()> {
+    let mut config = Config::from_env()?;
+    let requested = config.mode;
+    let (backend, can_observe) = Backend::detect(config.mode == Mode::Bidirectional).await?;
+    if !can_observe {
+        config.mode = Mode::Receive;
     }
-
-    debug!("request: {:?}", &request);
-    let (mut ws_stream, _) = connect_async(request).await?;
-    info!("connected to {server} with topic={topic} and timeout={timeout}");
-
-    let mut ping_interval = time::interval(Duration::from_secs(timeout));
-    let mut last_traffic = Instant::now();
-
-    loop {
+    log::info!(
+        "mode requested={requested:?} effective={:?} readable={can_observe}",
+        config.mode
+    );
+    let publisher = Publisher::new(config.clone())?;
+    let mut peer = Coordinator::new(config.clone(), backend)?;
+    if config.mode == Mode::Bidirectional {
+        peer.observe().await;
+    }
+    let mut subscription = tokio::spawn(transport::subscribe(config.clone(), peer.receiver()));
+    let mut publications = JoinSet::new();
+    let mut poll = time::interval(config.poll);
+    let mut work = time::interval(Duration::from_millis(10));
+    poll.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    work.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    let result = loop {
         tokio::select! {
-            Some(msg) = ws_stream.next() => {
-                last_traffic = Instant::now();
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        match serde_json::from_str::<WSMessage>(&text) {
-                            Ok(msg) => {
-                                if (msg.topic == topic) && (msg.event == "message") {
-                                    debug!("WS received message: {:?}", &msg);
-                                    if let Some(message) = msg.message {
-                                        spawn(async move {
-                                            if let Err(e) = set_clip(message).await {
-                                                error!("Failed to set clipboard: {}", e);
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Error in WebSocket connection: {}", e);
-                            }
-                        }
-                    }
-                    Ok(Message::Ping(ping)) => {
-                        ws_stream.send(Message::Pong(ping)).await?;
-                        debug!("WS received ping and sent pong");
-                    }
-                    Ok(Message::Pong(_)) => {
-                        debug!("WS received pong");
-                    }
-                    Ok(Message::Close(_)) => {
-                        debug!("WS received close message");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(e.to_string()));
-                    }
-                    _ => {}
-                }
-            },
-            _ = ping_interval.tick() => {
-                if last_traffic.elapsed() > Duration::from_secs(timeout) {
-                    return Err(anyhow!("No traffic in the last {} seconds", timeout));
-                }
+            signal = tokio::signal::ctrl_c() => { break signal.map_err(Into::into); }
+            result = &mut subscription => { break match result { Ok(Err(e)) => Err(e), _ => Err(anyhow::anyhow!("subscription worker stopped")) }; }
+            Some(result) = publications.join_next(), if !publications.is_empty() => {
+                match result { Ok(outcome) => peer.published(outcome), Err(_) => break Err(anyhow::anyhow!("publisher worker stopped")) }
             }
+            _ = poll.tick(), if config.mode == Mode::Bidirectional => { peer.observe().await; }
+            _ = work.tick() => { peer.write_next().await; }
         }
-    }
+        if let Some(job) = peer.next_publish() {
+            let publisher = publisher.clone();
+            publications.spawn(async move { publisher.publish(job).await });
+        }
+    };
+    subscription.abort();
+    let _ = subscription.await;
+    publications.shutdown().await;
+    peer.clipboard_mut().shutdown().await?;
+    log::info!("stopped; pending memory-only jobs discarded");
+    result
 }

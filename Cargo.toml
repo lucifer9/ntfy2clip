@@ -8,13 +8,7 @@ name = "n2c"
 path = "src/client.rs"
 
 [dependencies]
-tokio = { version = "1", features = [
-    "rt-multi-thread",
-    "net",
-    "macros",
-    "process",
-    "time",
-] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "process", "time", "sync", "io-util", "signal"] }
 log = "0.4"
 pretty_env_logger = "0.5"
 anyhow = "1"
@@ -22,14 +16,34 @@ url = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures-util = "0.3"
+uuid = { version = "1.26.1", features = ["v4", "serde"] }
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+httpdate = "1.0.3"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-tokio-tungstenite = { version = "*", features = ["native-tls", "url"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls", "url"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSArray"] }
 oslog = "0.2.0"
 rustls = { version = "0.23" }
-tokio-tungstenite = { version = "*", features = [
+tokio-tungstenite = { version = "0.30", features = [
     "rustls-tls-native-roots",
     "url",
 ] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wl-clipboard-rs = "0.9.3"
+x11rb = { version = "0.13", features = ["xfixes"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
