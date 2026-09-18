@@ -1,6 +1,6 @@
 # 剪切板监听与文本同步
 
-状态：实现已落地，发布验收未全部完成；见[验证记录](../../docs/clipboard-sync-validation.md)。下文保留原确认规格，未执行的真实矩阵不以模拟测试替代。
+状态：实现已落地，发布验收未全部完成；见[验证记录](../../docs/clipboard-sync-validation.md)。已按用户后续指令取消 Windows/WSL 支持；未执行的真实矩阵不以模拟测试替代。
 
 本文件是已确认行为和默认值的唯一规格；术语见 [CONTEXT.md](../../CONTEXT.md)，调查依据见 [调研记录](../../docs/clipboard-sync-plan.md)，协议取舍见 [ADR-0001](../../docs/adr/0001-versioned-text-sync.md)。
 
@@ -14,7 +14,8 @@
 
 - 文本，包括空字符串；不增加图片、文件、附件下载或消息分片。
 - 当前内容 hash + 网络 origin；不保存历史 hash、不写系统私有标记、不要求 event_id。
-- macOS、Windows、WSL、Xorg，以及具备 data-control 能力的 Wayland；重点验证 KDE Wayland。
+- macOS、Xorg，以及具备 data-control 能力的 Wayland；重点验证 KDE Wayland。
+- Windows/WSL 不支持；WSL 即使具有 WSLg 显示变量也明确拒绝，不误选 Linux selection。原 tickets 06/07 取消。
 - GNOME Wayland 首版不做自动上传，不开发 Shell 扩展；保留当前可用的接收路径并明确报告限制。
 - 不增加服务器历史重放、跨进程任务恢复、全局排序或恰好一次交付协议。
 
@@ -173,8 +174,6 @@ A 复制 X，经远程桌面进入 B，A/B 各发布一次是允许的。两端�
 | 平台 | 方向 | 必须验证 |
 | --- | --- | --- |
 | macOS | NSPasteboard 原生读取，changeCount 轮询；写入可复用命令或使用同一原生后端 | 原生线程约束、访问权限、Unicode/空文本、稳定快照、Screen Sharing 与 UU Remote 回流 |
-| Windows | 常驻消息循环接收 WM_CLIPBOARDUPDATE，读写 Unicode 文本 | 监听生命周期、剪切板占用、原生写入有界性、换行和编码无隐式变换 |
-| WSL | 常驻 Windows helper 使用 Windows 后端，经 stdin/stdout IPC 通信 | WSL 检测仍优先于 WSLg；构建及寻找 Windows helper；有长度边界、请求关联、大小限制、退出恢复的 IPC |
 | Xorg | XFixes CLIPBOARD 变更通知，评估复用 xclip 读写 | 不监听 PRIMARY；空文本、退出状态、后台 selection 生命周期、clipboard manager 接管 |
 | KDE Wayland | 在具备 ext/wlr data-control 的版本上监听；优先验证 Rust 协议后端，命令式辅助路线需明确数据帧边界 | 精确检测协议版本、seat、文本 MIME 类型、无焦点访问、生命周期和进程失败 |
 | GNOME Wayland | 首版无自动上传，不安装额外扩展 | 明确能力限制；仅保留已能工作的接收路径，不宣称所有 GNOME 版本的命令读写均可用 |
@@ -196,10 +195,10 @@ A 复制 X，经远程桌面进入 B，A/B 各发布一次是允许的。两端�
 
 ## 11. 实施顺序
 
-1. **能力验证**：使用合成文本验证 macOS、Windows/WSL、Xorg、KDE Wayland 的观察/写入和同值判断；验证自建官方服务的三订阅者广播、tag 转发、封装保真、大小限制。GNOME 只验证能力报告与可用接收。固定实际版本和依赖。
+1. **能力验证**：使用合成文本验证 macOS、Xorg、KDE Wayland 的观察/写入和同值判断；验证自建官方服务的三订阅者广播、tag 转发、封装保真、大小限制。GNOME 只验证能力报告与可用接收。固定实际版本和依赖。
 2. **同步核心**：先完成 N(text)、协议编解码、hash/origin、稳定快照协调、FIFO 及预算；用小型假后端和可控时钟测试行为，不绑定第三方内部实现。
 3. **双向 transport**：复用订阅语义，新增发布、错误分类和全局限流等待；分离连接重建与观察状态，处理关闭连接、流结束和后台任务失败。
-4. **平台接入**：依次接入 macOS、Windows/WSL、Xorg、KDE Wayland；维持仅接收兼容路径，不因缺少上传组件破坏原有可用写入。
+4. **平台接入**：依次接入 macOS、Xorg、KDE Wayland；维持仅接收兼容路径，不因缺少上传组件破坏原有可用写入。
 5. **端到端验证与文档**：测试三 peer、远程桌面及失败场景，补充配置、平台依赖和实际验证矩阵。移除正文/凭据日志，不顺带修复无关问题。
 
 本次不创建实现提交、不部署服务、不更改系统剪切板。实现任务可随后从本规格拆为 `.scratch/clipboard-sync/issues/NN-<slug>.md`，每个任务独立成文件。

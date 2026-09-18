@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Execution:** 已实现 macOS 原生 helper 与共享协调器；macOS/WSL/KDE 三 peer 及官方 ntfy 测试通过。完整验收范围见[验证记录](../../../docs/clipboard-sync-validation.md)。
+**Execution:** 已实现 macOS 原生 helper 与共享协调器；macOS/KDE 的真实同步及官方 ntfy 三 peer 测试通过。完整验收范围见[验证记录](../../../docs/clipboard-sync-validation.md)。
 
 本票必须完成基本状态正确性，不能将稳定快照、串行写入登记或防同值回环推迟到重试任务。范围不包含其他平台监听、服务器历史重放、事件历史去重或来源过滤。
 

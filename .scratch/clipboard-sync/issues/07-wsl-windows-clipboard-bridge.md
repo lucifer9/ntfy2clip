@@ -1,12 +1,12 @@
-# 07: WSL 与 Windows 剪切板桥接
+# 07: WSL 与 Windows 剪切板桥接（已取消）
 
 **What to build:** 在 WSL 中运行的 n2c 能监听和更新用户实际使用的 Windows 剪切板，与其他 peer 双向同步；无需依靠频繁启动 PowerShell，也不会误同步 WSLg 的 Linux selection。
 
 **Blocked by:** 06 — Windows 原生双向同步。
 
-**Status:** ready-for-agent
+**Status:** wontfix
 
-**Execution:** 已实现常驻 Windows helper、带长度/关联/版本的 IPC、WSL 内核识别及终止协调；WSL ↔ macOS/KDE 真实路径通过，见[验证记录](../../../docs/clipboard-sync-validation.md)。
+**Execution:** 用户后续明确取消 Windows/WSL 支持。桥接、Windows helper 和 clip.exe 路径已移除；WSL 启动明确拒绝。以下保留原始票据作为历史，下列验收不再适用。
 
 复用 Windows 剪切板后端及共享同步规则；本票负责常驻 helper 的完整部署和 IPC 生命周期，不另造一套发布器或去重规则。
 

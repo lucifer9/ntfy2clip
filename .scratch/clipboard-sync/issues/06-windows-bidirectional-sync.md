@@ -1,12 +1,12 @@
-# 06: Windows 原生双向同步
+# 06: Windows 原生双向同步（已取消）
 
 **What to build:** Windows 用户可以将真实本地复制经 ntfy 同步给其他 peer，也能接收并写入远端同步文本；使用与 macOS 相同的文本、hash、origin 和状态协调规则。
 
 **Blocked by:** 03 — macOS 正常网络下的双向同步。
 
-**Status:** ready-for-agent
+**Status:** wontfix
 
-**Execution:** 已实现 Windows Unicode 后端和监听窗口；Windows 原生 n2c.exe ↔ macOS 真实路径、Windows helper 读写已验证。环境与剩余范围见[验证记录](../../../docs/clipboard-sync-validation.md)。
+**Execution:** 用户后续明确取消 Windows/WSL 支持。Windows 后端、依赖及测试已移除；以下保留原始票据作为历史，下列验收不再适用。
 
 本票交付 Windows 平台的完整正常路径和平台生命周期。04/05 是独立的共享失败恢复增量，不是本票的开始条件；不得在后端复制它们的队列或重试逻辑。
 

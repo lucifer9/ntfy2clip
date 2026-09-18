@@ -41,39 +41,28 @@ impl Clipboard for CommandClipboard {
     }
     async fn write(&mut self, text: &str, timeout: Duration) -> Result<(), WriteError> {
         let mut command = copy_command().map_err(|e| WriteError::Permanent(e.to_string()))?;
-        if cfg!(target_os = "windows") || is_wsl() {
-            if text.contains('\0') {
-                return Err(WriteError::Permanent(
-                    "Windows clipboard cannot represent embedded NUL".into(),
-                ));
-            }
-            let bytes: Vec<u8> = std::iter::once(0xfeffu16)
-                .chain(text.encode_utf16())
-                .flat_map(u16::to_le_bytes)
-                .collect();
-            write_command(&mut command, &bytes, timeout).await
-        } else {
-            write_command(&mut command, text.as_bytes(), timeout).await
-        }
+        write_command(&mut command, text.as_bytes(), timeout).await
     }
 }
 
-pub fn is_wsl() -> bool {
+fn is_wsl() -> bool {
     cfg!(target_os = "linux")
         && (std::env::var_os("WSL_DISTRO_NAME").is_some()
             || std::fs::read_to_string("/proc/sys/kernel/osrelease")
                 .is_ok_and(|release| release.to_ascii_lowercase().contains("microsoft")))
 }
 
+pub(crate) fn ensure_supported() -> Result<()> {
+    if cfg!(target_os = "windows") || is_wsl() {
+        return Err(anyhow!("Windows and WSL are not supported"));
+    }
+    Ok(())
+}
+
 pub fn copy_command() -> Result<Command> {
+    ensure_supported()?;
     if cfg!(target_os = "macos") {
         return Ok(Command::new("/usr/bin/pbcopy"));
-    }
-    if cfg!(target_os = "windows") {
-        return Ok(Command::new("clip.exe"));
-    }
-    if is_wsl() {
-        return Ok(Command::new("/mnt/c/Windows/System32/clip.exe"));
     }
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         return Ok(Command::new("wl-copy"));

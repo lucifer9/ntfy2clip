@@ -18,7 +18,6 @@ pub enum Operation {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Response {
-    pub pid: u32,
     pub version: u32,
     pub id: u64,
     pub result: ResponseResult,
@@ -29,7 +28,6 @@ pub enum ResponseResult {
     Snapshot { value: Snapshot, revision: u64 },
     Written,
     Temporary,
-    TemporaryReason(String),
     Permanent,
 }
 

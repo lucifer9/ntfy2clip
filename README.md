@@ -52,7 +52,6 @@ SYNC_MODE=bidirectional SERVER=ntfy.example.com TOPIC=my-clipboard target/releas
 | WRITE_MAX_ATTEMPTS | 5 | 总写入尝试次数 |
 | WRITE_RETRY_BASE_MS | 50 | 写入退避起点 |
 | WRITE_RETRY_MAX_MS | 400 | 写入退避上限 |
-| N2C_WINDOWS_HELPER | n2c.exe（PATH） | WSL 使用的 Windows helper 路径 |
 
 新增数值配置必须在 `1..=4294967295`，退避起点不能大于上限；非法值报错退出。部署时将 `MAX_MESSAGE_BYTES` 与实际 ntfy 实例的 `message-size-limit` 匹配，不套用托管服务额度。超限拒绝，不截断或自动转附件。helper IPC 另有 16 MiB 帧上限。
 
@@ -61,28 +60,16 @@ SYNC_MODE=bidirectional SERVER=ntfy.example.com TOPIC=my-clipboard target/releas
 | 平台 | 后端与依赖 |
 | --- | --- |
 | macOS | 自带常驻原生 helper，主线程使用 NSPasteboard，changeCount 校验快照。默认日志进入 `ntfyclip` unified log；`DEV=1` 使用 stderr。helper 不可用时保留 `/usr/bin/pbcopy` 接收路径。 |
-| Windows | 同一个 `n2c.exe` 作为原生 helper；双向模式建立 WM_CLIPBOARDUPDATE 消息窗口，实际快照在剪切板锁内读取，sequence number 仅用于版本信息。需要已登录、可访问剪切板的交互桌面。CF_UNICODETEXT 不支持内嵌 NUL，明确拒绝。 |
-| WSL | 优先识别 WSL 环境变量或 Microsoft 内核，始终操作 Windows 剪切板，不切换到 WSLg。需要 Windows 版 helper；缺失时报告降为仅接收，使用 `clip.exe`。 |
+| Windows / WSL | 不支持。WSL 即使设置了 WSLg 的显示变量，也会明确报错退出，不选择 Linux selection 作为替代。 |
 | Xorg | Rust x11rb/XFixes 读取 CLIPBOARD（含有界 INCR 传输）；安装 `xclip` 写入。前台 selection owner 由主进程监督并保留到失去所有权/退出，PRIMARY 不参与同步。 |
 | KDE Wayland | Rust wl-clipboard-rs 通过 ext/wlr data-control 和 seat 获取当前 offer；重新获取快照，拒绝传输期间可见的变化。写入需 `wl-copy`，以前台进程保有 selection。需要实际桌面用户的 `XDG_RUNTIME_DIR`、`WAYLAND_DISPLAY`。 |
 | GNOME / 能力不足 | GNOME Wayland 首版不自动上传。缺协议、seat、显示连接或 helper 时报告请求/有效模式及限制，保留原有命令接收路径；不保证任意 GNOME 环境都能运行 `wl-copy`。不回退到 XWayland 假装支持整个 Wayland 剪切板。 |
 
 Unix 构建需要工具链和对应 TLS 开发库（Linux 使用 native-tls/OpenSSL）；macOS 使用系统 SDK，WebSocket 仍使用 rustls。`Cargo.lock` 固定了测试过的依赖解析。
 
-### WSL helper
+### 原生 helper 的生命周期
 
-在 Windows 原生构建 `cargo build --release`，或用有 MinGW linker 的 Linux 工具链交叉构建：
-
-```sh
-rustup target add x86_64-pc-windows-gnu
-cargo build --release --locked --target x86_64-pc-windows-gnu
-export N2C_WINDOWS_HELPER=/path/to/n2c.exe
-SYNC_MODE=bidirectional SERVER=ntfy.example.com TOPIC=my-clipboard ./target/release/n2c
-```
-
-helper 与主进程使用长度前缀、请求 id 和版本检查的 stdin/stdout IPC；诊断不混入数据帧。启动握手最多 10 秒；操作失败后先终止、回收，再允许新请求，不重放旧请求。原生写入有进程内 watchdog；WSL 还按 helper 返回的 Windows PID 调用 `taskkill.exe`，随后回收 interop 进程。终止清理可能花费额外时间；终止失败会禁用该 helper，不能继续并发旧写入。
-
-升级前停止 n2c 及其 helper，再替换 exe。验证中观察到：Windows 仍持有旧 image 时，直接覆盖 WSL 路径下的 exe，新的调用仍可能得到旧 IPC 响应；使用新文件路径并重启可消除歧义。
+macOS/Linux 使用同一可执行文件的内部 helper 模式，以长度前缀、请求 id 和版本检查进行 stdin/stdout IPC；诊断不混入数据帧。启动握手最多 10 秒；操作失败后先终止、回收，再允许新请求，不重放旧请求。原生写入有进程内 watchdog。终止清理可能花费额外时间；终止失败会禁用该 helper，不能继续并发旧写入。升级前应停止 n2c，再替换可执行文件。
 
 ## 验证与已知边界
 
@@ -94,7 +81,7 @@ cargo test --locked
 # 以下测试会改写桌面剪切板，只在明确的测试会话运行：
 cargo test --test native -- --ignored
 # 受控官方 ntfy，仅使用随机测试 topic 和合成文本：
-N2C_TEST_SERVER=127.0.0.1:18280 cargo test --test ntfy -- --ignored
+N2C_TEST_SERVER=127.0.0.1:18281 cargo test --test ntfy -- --ignored
 # 隔离 X server；不等于实际 Xorg 桌面验收：
 DISPLAY=:97 cargo test --test xorg -- --ignored
 ```

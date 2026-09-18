@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     clipboard.connect().await?;
     match operation.as_str() {
         "set" => {
-            if cfg!(target_os = "linux") && !ntfy2clip::clipboard::is_wsl() {
+            if cfg!(target_os = "linux") {
                 CommandClipboard
                     .write(&text, Duration::from_secs(1))
                     .await?;
@@ -24,9 +24,18 @@ async fn main() -> Result<()> {
             }
         }
         "assert" => {
-            if clipboard.read().await? != Snapshot::Text(text) {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let actual = clipboard.read().await?;
+                if actual == Snapshot::Text(text.clone()) {
+                    break;
+                }
+                if tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
                 clipboard.shutdown().await?;
-                bail!("synthetic clipboard assertion failed (contents withheld)");
+                bail!("synthetic clipboard assertion timed out (contents withheld)");
             }
         }
         _ => bail!("expected set/assert"),

@@ -14,20 +14,12 @@ mod linux;
 pub use linux::LinuxClipboard;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "windows")]
-mod windows;
 
 pub fn helper_main() -> Result<()> {
-    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         #[cfg(target_os = "linux")]
         let mut reader = linux::Reader::new()?;
-        #[cfg(target_os = "windows")]
-        let _listener = if std::env::args().any(|arg| arg == "--observe") {
-            Some(windows::Listener::new()?)
-        } else {
-            None
-        };
         let mut input = std::io::stdin().lock();
         let mut output = std::io::stdout().lock();
         loop {
@@ -40,7 +32,6 @@ pub fn helper_main() -> Result<()> {
                 ipc::write_frame(
                     &mut output,
                     &Response {
-                        pid: std::process::id(),
                         version: 1,
                         id: request.id,
                         result: ResponseResult::Ready,
@@ -48,9 +39,7 @@ pub fn helper_main() -> Result<()> {
                 )?;
                 continue;
             }
-            // On WSL, terminating an interop proxy alone is insufficient proof
-            // that a Windows native call stopped. The helper enforces its own
-            // write deadline, and the parent also terminates its Windows PID.
+            // A stuck native write cannot survive its deadline or helper process.
             let watchdog = if matches!(request.operation, Operation::Write(_)) {
                 let (done, wait) = std::sync::mpsc::channel();
                 let budget = Duration::from_millis(request.budget_ms.max(1));
@@ -70,8 +59,6 @@ pub fn helper_main() -> Result<()> {
             };
             #[cfg(target_os = "macos")]
             let result = macos::operate(request.operation);
-            #[cfg(target_os = "windows")]
-            let result = windows::operate(request.operation);
             #[cfg(target_os = "linux")]
             let result = reader.operate(request.operation);
             if let Some((done, thread)) = watchdog {
@@ -83,7 +70,6 @@ pub fn helper_main() -> Result<()> {
             ipc::write_frame(
                 &mut output,
                 &Response {
-                    pid: std::process::id(),
                     version: 1,
                     id: request.id,
                     result,
@@ -91,15 +77,14 @@ pub fn helper_main() -> Result<()> {
             )?;
         }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-    bail!("native helper requires macOS or Windows")
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    bail!("clipboard helper requires macOS or Linux")
 }
 
 pub struct NativeClipboard {
     executable: PathBuf,
     child: Option<Child>,
     id: u64,
-    native_pid: Option<u32>,
     poisoned: bool,
     observe: bool,
 }
@@ -109,7 +94,6 @@ impl NativeClipboard {
             executable,
             child: None,
             id: 0,
-            native_pid: None,
             poisoned: false,
             observe: false,
         }
@@ -130,56 +114,22 @@ impl NativeClipboard {
     async fn stop(&mut self) -> Result<()> {
         self.poisoned = true;
         if let Some(child) = self.child.as_mut() {
-            // EOF allows the native listener to unregister on its owning thread.
             child.stdin.take();
             if let Ok(status) = tokio::time::timeout(Duration::from_millis(200), child.wait()).await
             {
                 status.context("helper graceful reap failed")?;
                 self.child = None;
-                self.native_pid = None;
                 self.poisoned = false;
                 return Ok(());
             }
         }
-        if let Some(child) = self.child.as_mut()
-            && child.try_wait()?.is_some()
-        {
-            self.child = None;
-            self.native_pid = None;
-            self.poisoned = false;
-            return Ok(());
-        }
-        if crate::clipboard::is_wsl()
-            && self
-                .executable
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-            && let Some(pid) = self.native_pid
-        {
-            let mut killer = Command::new("/mnt/c/Windows/System32/taskkill.exe");
-            killer
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .kill_on_drop(true);
-            if crate::clipboard::write_command(&mut killer, b"", Duration::from_secs(5))
-                .await
-                .is_err()
-                && self
-                    .child
-                    .as_mut()
-                    .is_some_and(|child| child.try_wait().ok().flatten().is_none())
-            {
-                bail!("Windows helper termination failed; backend disabled");
-            }
-        }
-        if let Some(mut child) = self.child.take() {
+        if let Some(child) = self.child.as_mut() {
             if child.try_wait()?.is_none() {
                 child.kill().await?;
             }
             child.wait().await?;
         }
-        self.native_pid = None;
+        self.child = None;
         self.poisoned = false;
         Ok(())
     }
@@ -194,14 +144,13 @@ impl NativeClipboard {
             budget_ms: timeout.as_millis().min(u64::MAX as u128) as u64,
         })?;
         if self.child.is_none() {
+            let mut command = Command::new(&self.executable);
+            command.arg("--clipboard-helper");
+            if self.observe {
+                command.arg("--observe");
+            }
             self.child = Some(
-                Command::new(&self.executable)
-                    .arg("--clipboard-helper")
-                    .args(if self.observe {
-                        vec!["--observe"]
-                    } else {
-                        vec![]
-                    })
+                command
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())
@@ -227,7 +176,6 @@ impl NativeClipboard {
             if response.version != 1 || response.id != self.id {
                 bail!("helper protocol or request mismatch");
             }
-            self.native_pid = Some(response.pid);
             Ok(response.result)
         };
         match tokio::time::timeout(timeout, operation).await {
@@ -258,7 +206,6 @@ impl Clipboard for NativeClipboard {
             .await?
         {
             ResponseResult::Snapshot { value, .. } => Ok(value),
-            ResponseResult::TemporaryReason(reason) => bail!("native clipboard read: {reason}"),
             _ => bail!("native clipboard read unavailable"),
         }
     }
@@ -268,7 +215,6 @@ impl Clipboard for NativeClipboard {
             Ok(ResponseResult::Permanent) => Err(WriteError::Permanent(
                 "native clipboard cannot represent text".into(),
             )),
-            Ok(ResponseResult::TemporaryReason(reason)) => Err(WriteError::Temporary(reason)),
             Err(error) => Err(WriteError::Temporary(error.to_string())),
             _ => Err(WriteError::Temporary(
                 "native clipboard operation failed".into(),
@@ -285,20 +231,11 @@ pub enum Backend {
 }
 impl Backend {
     pub async fn detect(observe: bool) -> Result<(Self, bool)> {
-        let native = if cfg!(any(target_os = "macos", target_os = "windows")) {
-            Some(std::env::current_exe()?)
-        } else if crate::clipboard::is_wsl() {
-            // WSL must never fall through to WSLg's selection.
-            Some(
-                std::env::var_os("N2C_WINDOWS_HELPER")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("n2c.exe")),
-            )
-        } else {
-            None
-        };
-        if let Some(path) = native {
-            let mut native = NativeClipboard::new(path).with_observation(observe);
+        // Do not reinterpret WSLg as a supported native Linux desktop.
+        crate::clipboard::ensure_supported()?;
+        if cfg!(target_os = "macos") {
+            let mut native =
+                NativeClipboard::new(std::env::current_exe()?).with_observation(observe);
             match native.connect().await {
                 Ok(_) => return Ok((Self::Native(Box::new(native)), true)),
                 Err(_) => {
@@ -310,10 +247,7 @@ impl Backend {
             }
         }
         #[cfg(target_os = "linux")]
-        if !crate::clipboard::is_wsl()
-            && (std::env::var_os("WAYLAND_DISPLAY").is_some()
-                || std::env::var_os("DISPLAY").is_some())
-        {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some() {
             let gnome = std::env::var("XDG_CURRENT_DESKTOP")
                 .unwrap_or_default()
                 .to_ascii_lowercase()
