@@ -51,15 +51,13 @@ pub struct Receiver {
 }
 impl Receiver {
     pub fn receive(&self, frame: &str) -> Result<()> {
-        self.receive_at(frame, Instant::now())
-    }
-    fn receive_at(&self, frame: &str, received: Instant) -> Result<()> {
+        let received = Instant::now();
+        let generation = self.generation.load(Ordering::SeqCst);
         if let Some(text) = self.protocol.decode(frame)? {
-            self.writes.lock().expect("write queue poisoned").push_at(
-                text,
-                self.generation.load(Ordering::SeqCst),
-                received,
-            );
+            self.writes
+                .lock()
+                .expect("write queue poisoned")
+                .push_at(text, generation, received);
         }
         Ok(())
     }
@@ -102,9 +100,6 @@ impl<C: Clipboard> Coordinator<C> {
     pub fn clipboard_mut(&mut self) -> &mut C {
         &mut self.clipboard
     }
-    pub fn protocol(&self) -> &Protocol {
-        &self.protocol
-    }
     pub fn receiver(&self) -> Receiver {
         Receiver {
             protocol: self.protocol.clone(),
@@ -116,7 +111,6 @@ impl<C: Clipboard> Coordinator<C> {
         match self.clipboard.read().await {
             Ok(snapshot) => {
                 let Some(state) = current(&snapshot) else {
-                    self.current = None;
                     return false;
                 };
                 if self.current.as_ref() == Some(&state) {
@@ -124,9 +118,11 @@ impl<C: Clipboard> Coordinator<C> {
                 }
                 let baseline = self.current.is_none();
                 self.current = Some(state);
-                self.generation += 1;
-                self.shared_generation
-                    .store(self.generation, Ordering::SeqCst);
+                if !baseline {
+                    self.generation += 1;
+                    self.shared_generation
+                        .store(self.generation, Ordering::SeqCst);
+                }
                 if !baseline
                     && self.config.mode == Mode::Bidirectional
                     && let Snapshot::Text(text) = snapshot
@@ -143,13 +139,6 @@ impl<C: Clipboard> Coordinator<C> {
                 false
             }
         }
-    }
-    pub async fn receive(&mut self, frame: &str) -> Result<()> {
-        let received = Instant::now();
-        if self.protocol.decode(frame)?.is_some() {
-            self.observe().await;
-        }
-        self.receiver().receive_at(frame, received)
     }
     pub async fn write_next(&mut self) {
         {
@@ -177,16 +166,11 @@ impl<C: Clipboard> Coordinator<C> {
         let (text, expected, timeout) = {
             let mut writes = self.writes.lock().expect("write queue poisoned");
             let job = writes.jobs.front_mut().expect("reserved write head");
-            if job.deadline <= Instant::now()
-                || (job.attempts > 0 && job.generation != self.generation)
-            {
+            if job.deadline <= Instant::now() || job.generation != self.generation {
                 log::warn!("write expired or cancelled by local change");
                 writes.pop();
                 return;
             }
-            // First delivery processes newly discovered local content before
-            // registering its target. Previously started retries never do this.
-            job.generation = self.generation;
             if !observed && self.config.mode == Mode::Bidirectional {
                 job.active = false;
                 return;

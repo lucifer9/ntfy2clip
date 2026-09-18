@@ -88,6 +88,33 @@ async fn early_and_delayed_own_origin_never_overwrite_local_content() {
     );
 }
 
+#[tokio::test]
+async fn receive_only_first_baseline_does_not_cancel_queued_messages() {
+    let mut cfg = config();
+    cfg.mode = ntfy2clip::config::Mode::Receive;
+    let mut peer = Coordinator::new(cfg, Desktop::new()).unwrap();
+    let receiver = peer.receiver();
+    receiver.receive(&frame("A")).unwrap();
+    receiver.receive(&frame("B")).unwrap();
+    peer.write_next().await;
+    peer.write_next().await;
+    assert_eq!(*peer.clipboard_mut().writes.lock().unwrap(), ["A", "B"]);
+}
+#[tokio::test]
+async fn new_local_content_cancels_even_an_unattempted_older_remote_target() {
+    let mut peer = Coordinator::new(config(), Desktop::new()).unwrap();
+    peer.observe().await;
+    peer.receiver().receive(&frame("old remote")).unwrap();
+    *peer.clipboard_mut().state.lock().unwrap() = Snapshot::Text("new local".into());
+    peer.write_next().await;
+    assert!(peer.clipboard_mut().writes.lock().unwrap().is_empty());
+    assert_eq!(
+        *peer.clipboard_mut().state.lock().unwrap(),
+        Snapshot::Text("new local".into())
+    );
+    assert!(peer.next_publish().unwrap().body.contains("new local"));
+}
+
 fn config() -> Config {
     Config::parse(|key| match key {
         "TOPIC" => Some("test".into()),

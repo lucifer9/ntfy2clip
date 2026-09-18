@@ -90,6 +90,7 @@ async fn run() -> Result<()> {
         peer.observe().await;
     }
     let mut subscription = tokio::spawn(transport::subscribe(config.clone(), peer.receiver()));
+    let mut subscription_completed = false;
     let mut publications = JoinSet::new();
     let mut poll = time::interval(config.poll);
     let mut work = time::interval(Duration::from_millis(10));
@@ -98,7 +99,7 @@ async fn run() -> Result<()> {
     let result = loop {
         tokio::select! {
             signal = tokio::signal::ctrl_c() => { break signal.map_err(Into::into); }
-            result = &mut subscription => { break match result { Ok(Err(e)) => Err(e), _ => Err(anyhow::anyhow!("subscription worker stopped")) }; }
+            result = &mut subscription => { subscription_completed = true; break match result { Ok(Err(e)) => Err(e), _ => Err(anyhow::anyhow!("subscription worker stopped")) }; }
             Some(result) = publications.join_next(), if !publications.is_empty() => {
                 match result { Ok(outcome) => peer.published(outcome), Err(_) => break Err(anyhow::anyhow!("publisher worker stopped")) }
             }
@@ -110,8 +111,10 @@ async fn run() -> Result<()> {
             publications.spawn(async move { publisher.publish(job).await });
         }
     };
-    subscription.abort();
-    let _ = subscription.await;
+    if !subscription_completed {
+        subscription.abort();
+        let _ = subscription.await;
+    }
     publications.shutdown().await;
     peer.clipboard_mut().shutdown().await?;
     log::info!("stopped; pending memory-only jobs discarded");

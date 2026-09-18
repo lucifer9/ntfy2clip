@@ -15,6 +15,12 @@ async fn xfixes_clipboard_keeps_selection_alive_and_ignores_primary() {
         backend.write(text, Duration::from_secs(1)).await.unwrap();
         assert_eq!(backend.read().await.unwrap(), Snapshot::Text(text.into()));
     }
+    let large = "synthetic-INCR-中文🙂 ".repeat(16000);
+    backend.write(&large, Duration::from_secs(1)).await.unwrap();
+    assert!(
+        backend.read().await.unwrap() == Snapshot::Text(large),
+        "INCR synthetic readback mismatch"
+    );
     backend
         .write("stable", Duration::from_secs(1))
         .await
@@ -41,8 +47,8 @@ async fn xfixes_clipboard_keeps_selection_alive_and_ignores_primary() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     peer.observe().await;
     assert!(peer.next_publish().is_none());
-    peer.receive(r#"{"topic":"test","event":"message","message":"from network\r\n"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"topic":"test","event":"message","message":"from network\r\n"}"#)
         .unwrap();
     peer.write_next().await;
     peer.observe().await;

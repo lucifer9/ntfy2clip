@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const TAG: &str = "ntfy2clip";
+/// Account for the ntfy JSON wrapper's escaping without unbounded WebSocket decoding.
+pub fn frame_limit(max_message: usize) -> usize {
+    max_message.saturating_mul(6).saturating_add(65536)
+}
 pub fn normalize(text: &str) -> &str {
     text.trim_end_matches(['\r', '\n'])
 }
@@ -48,7 +52,7 @@ impl Protocol {
         Ok(body)
     }
     pub fn frame_limit(&self) -> usize {
-        self.max.saturating_mul(6).saturating_add(65536)
+        frame_limit(self.max)
     }
     pub fn decode(&self, frame: &str) -> Result<Option<String>> {
         if frame.len() > self.frame_limit() {

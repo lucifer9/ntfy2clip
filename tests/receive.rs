@@ -29,18 +29,18 @@ async fn production_receiver_filters_and_failure_does_not_block_following_messag
         r#"{"topic":"test","event":"open","message":"ignored"}"#,
         r#"{"topic":"test","event":"message","message":"hello\r\n"}"#,
     ] {
-        peer.receive(frame).await.unwrap();
+        peer.receiver().receive(frame).unwrap();
         peer.write_next().await;
     }
     assert_eq!(peer.clipboard_mut().writes, ["hello"]);
     peer.clipboard_mut().fail = true;
-    peer.receive(r#"{"topic":"test","event":"message","message":"failure"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"topic":"test","event":"message","message":"failure"}"#)
         .unwrap();
     peer.write_next().await;
     peer.clipboard_mut().fail = false;
-    peer.receive(r#"{"topic":"test","event":"message","message":"next"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"topic":"test","event":"message","message":"next"}"#)
         .unwrap();
     peer.write_next().await;
     assert_eq!(peer.clipboard_mut().writes, ["hello", "next"]);

@@ -98,7 +98,7 @@ async fn connection(config: &Config, receiver: &Receiver) -> Result<()> {
         reqwest::header::HeaderValue::set_sensitive(&mut auth, true);
         request.headers_mut().insert("Authorization", auth);
     }
-    let limit = config.max_message.saturating_mul(6).saturating_add(65536);
+    let limit = crate::protocol::frame_limit(config.max_message);
     let socket_config = WebSocketConfig::default()
         .max_message_size(Some(limit))
         .max_frame_size(Some(limit));

@@ -62,16 +62,16 @@ async fn temporary_write_retries_but_new_local_state_cancels_old_target() {
     };
     let mut peer = Coordinator::new(config(), desktop).unwrap();
     peer.observe().await;
-    peer.receive(r#"{"event":"message","topic":"test","message":"remote"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"event":"message","topic":"test","message":"remote"}"#)
         .unwrap();
     peer.write_next().await;
     tokio::time::advance(Duration::from_millis(50)).await;
     peer.write_next().await;
     assert_eq!(peer.clipboard_mut().writes, ["remote"]);
     peer.clipboard_mut().failures = 1;
-    peer.receive(r#"{"event":"message","topic":"test","message":"old target"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"event":"message","topic":"test","message":"old target"}"#)
         .unwrap();
     peer.write_next().await;
     peer.clipboard_mut().snapshot = Snapshot::Text("new local".into());
@@ -104,8 +104,8 @@ async fn baseline_then_local_change_and_remote_write_do_not_loop() {
     let published = peer.next_publish().unwrap();
     assert!(published.body.contains(" X"));
     peer.published(ntfy2clip::sync::PublishResult::Accepted);
-    peer.receive(r#"{"event":"message","topic":"test","message":"remote\n"}"#)
-        .await
+    peer.receiver()
+        .receive(r#"{"event":"message","topic":"test","message":"remote\n"}"#)
         .unwrap();
     peer.write_next().await;
     peer.observe().await;
