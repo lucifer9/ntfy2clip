@@ -22,11 +22,14 @@ enum Current {
     Empty,
     NonText,
 }
+impl Current {
+    fn from_text(text: &str) -> Self {
+        Self::Text(Sha256::digest(normalize(text).as_bytes()).into())
+    }
+}
 fn current(snapshot: &Snapshot) -> Option<Current> {
     match snapshot {
-        Snapshot::Text(text) => Some(Current::Text(
-            Sha256::digest(normalize(text).as_bytes()).into(),
-        )),
+        Snapshot::Text(text) => Some(Current::from_text(text)),
         Snapshot::Empty => Some(Current::Empty),
         Snapshot::NonText => Some(Current::NonText),
         Snapshot::Unavailable => None,
@@ -175,7 +178,7 @@ impl<C: Clipboard> Coordinator<C> {
                 job.active = false;
                 return;
             }
-            let expected = current(&Snapshot::Text(job.text.clone()));
+            let expected = Some(Current::from_text(&job.text));
             if observed && expected == self.current {
                 writes.pop();
                 return;

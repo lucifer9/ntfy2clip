@@ -1,9 +1,19 @@
 use std::process::Command;
+
+fn isolated_client() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_n2c"));
+    command.env_clear();
+    // Keep coverage profiles discoverable without inheriting application settings.
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    command
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn wsl_is_rejected_instead_of_using_wslg() {
-    let output = Command::new(env!("CARGO_BIN_EXE_n2c"))
-        .env_clear()
+    let output = isolated_client()
         .env("TOPIC", "test")
         .env("SYNC_MODE", "bidirectional")
         .env("WSL_DISTRO_NAME", "synthetic-wsl")
@@ -20,8 +30,7 @@ fn wsl_is_rejected_instead_of_using_wslg() {
 
 #[test]
 fn invalid_configuration_fails_without_leaking_credentials() {
-    let output = Command::new(env!("CARGO_BIN_EXE_n2c"))
-        .env_clear()
+    let output = isolated_client()
         .env("DEV", "1")
         .env("TOPIC", "test")
         .env("SYNC_MODE", "invalid")

@@ -8,6 +8,8 @@ fn compatibility_empty_text_invalid_envelopes_and_serialized_byte_limit() {
         ("\\r\\n", ""),
         (" a\\nb\\n", " a\nb"),
         ("abc\\n ", "abc\n "),
+        ("中文🙂\\r\\n", "中文🙂"),
+        (" a\\t\\r\\n", " a\t"),
         ("{\\\"v\\\":9}", "{\"v\":9}"),
     ] {
         let frame = format!(r#"{{"topic":"test","event":"message","message":"{raw}"}}"#);

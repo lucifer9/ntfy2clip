@@ -72,7 +72,7 @@ impl Protocol {
         if body.len() > self.max {
             bail!("received body exceeds MAX_MESSAGE_BYTES");
         }
-        let text = if msg.tags.iter().any(|tag| tag == TAG) {
+        let mut text = if msg.tags.iter().any(|tag| tag == TAG) {
             let envelope: Envelope = serde_json::from_str(&body)
                 .map_err(|_| anyhow::anyhow!("invalid application envelope"))?;
             if envelope.v != 1 {
@@ -88,6 +88,7 @@ impl Protocol {
         if text.len() > self.max {
             bail!("received text exceeds MAX_MESSAGE_BYTES");
         }
-        Ok(Some(normalize(&text).into()))
+        text.truncate(normalize(&text).len());
+        Ok(Some(text))
     }
 }
