@@ -83,13 +83,10 @@ impl Queue {
             self.pop();
             return;
         }
-        let multiplier = 1u32
-            .checked_shl(job.attempts.saturating_sub(1))
-            .unwrap_or(u32::MAX);
         let delay = self
             .budget
             .retry_base
-            .saturating_mul(multiplier)
+            .saturating_mul(1u32 << job.attempts.saturating_sub(1).min(31))
             .min(self.budget.retry_max);
         job.ready = Instant::now() + delay;
     }

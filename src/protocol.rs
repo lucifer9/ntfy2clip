@@ -85,9 +85,6 @@ impl Protocol {
         } else {
             body
         };
-        if text.len() > self.max {
-            bail!("received text exceeds MAX_MESSAGE_BYTES");
-        }
         text.truncate(normalize(&text).len());
         Ok(Some(text))
     }

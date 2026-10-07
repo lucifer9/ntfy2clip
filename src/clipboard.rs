@@ -59,7 +59,7 @@ pub(crate) fn ensure_supported() -> Result<()> {
     Ok(())
 }
 
-pub fn copy_command() -> Result<Command> {
+pub(crate) fn copy_command() -> Result<Command> {
     ensure_supported()?;
     if cfg!(target_os = "macos") {
         return Ok(Command::new("/usr/bin/pbcopy"));

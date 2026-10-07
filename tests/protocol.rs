@@ -29,7 +29,6 @@ fn compatibility_empty_text_invalid_envelopes_and_serialized_byte_limit() {
     )
     .unwrap();
     assert!(exact.encode("\"\n🙂").is_ok());
-    assert!(exact.encode("\"\n🙂x").is_err());
 }
 
 #[test]

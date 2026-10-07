@@ -39,34 +39,10 @@ pub fn helper_main() -> Result<()> {
                 )?;
                 continue;
             }
-            // A stuck native write cannot survive its deadline or helper process.
-            let watchdog = if matches!(request.operation, Operation::Write(_)) {
-                let (done, wait) = std::sync::mpsc::channel();
-                let budget = Duration::from_millis(request.budget_ms.max(1));
-                Some((
-                    done,
-                    std::thread::spawn(move || {
-                        if matches!(
-                            wait.recv_timeout(budget),
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                        ) {
-                            std::process::exit(2);
-                        }
-                    }),
-                ))
-            } else {
-                None
-            };
             #[cfg(target_os = "macos")]
             let result = macos::operate(request.operation);
             #[cfg(target_os = "linux")]
             let result = reader.operate(request.operation);
-            if let Some((done, thread)) = watchdog {
-                let _ = done.send(());
-                thread
-                    .join()
-                    .map_err(|_| anyhow::anyhow!("helper watchdog panicked"))?;
-            }
             ipc::write_frame(
                 &mut output,
                 &Response {

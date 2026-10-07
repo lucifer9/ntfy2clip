@@ -27,6 +27,11 @@ impl Current {
         Self::Text(Sha256::digest(normalize(text).as_bytes()).into())
     }
 }
+/// Maps Snapshot to its SHA-256 compressed representation for deduplication.
+///
+/// Empty/NonText/Unavailable are distinct states even though they behave identically
+/// in same-value suppression. The distinction supports log readability and future
+/// extensions (e.g., publishing explicit "clear clipboard" messages).
 fn current(snapshot: &Snapshot) -> Option<Current> {
     match snapshot {
         Snapshot::Text(text) => Some(Current::from_text(text)),
@@ -163,6 +168,9 @@ impl<C: Clipboard> Coordinator<C> {
             }
             // Reserve the head across the fresh read: concurrent ingress may
             // evict only waiting jobs, never this operation or its accounting.
+            // Note: Current implementation does not have concurrent write_next calls
+            // (Coordinator is not Sync), but Receiver::receive runs in a separate
+            // subscription task and may evict jobs while this write is in progress.
             job.active = true;
         }
         let observed = self.observe().await;

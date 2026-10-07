@@ -1,4 +1,7 @@
 //! Synthetic desktop-test fixture. Never prints clipboard contents.
+//!
+//! CommandClipboard is used here with pub(crate) visibility for Linux set operations,
+//! where we need to invoke external clipboard commands without a helper process.
 use anyhow::{Result, bail};
 use ntfy2clip::{
     clipboard::{Clipboard, CommandClipboard, Snapshot},
